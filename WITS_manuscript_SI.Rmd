@@ -1,0 +1,478 @@
+---
+title: "Infection and immunity in the ageing host: Tackling the bacterial side."
+subtitle: "Supplementary Information"
+author: "Anaid Diaz, Amelia Charbonneau and Olivier Restif"
+date: 20 February 2016
+output: 
+  html_document: 
+    fig_caption: yes
+    code_folding: hide
+    number_sections: yes
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: paper
+---
+
+
+
+
+```{r, echo=T, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(survival)
+```
+
+
+# Age facilitates establishment of commensal bacteria
+
+In this section, we only look at the control groups, i.e. those not exposed to the pathogen _P. aeruginosa_.
+
+## Bacterial loads
+
+Total bacterial loads per worm were estimated by calculating the ratio of the number of cfu by the fraction of worm lysate plated.
+
+```{r, echo=T, message=FALSE, warning=FALSE}
+cfu.data <- read.csv("tidy_data_cfu.csv")
+
+# Extract data for controls
+cfu.data.controls <- cfu.data %>% filter(grepl("control",group))
+
+# Estimate the total number of bacteria per worm
+Sen.load.controls <- cfu.data.controls %>%
+	group_by(genotype,group,day,worm) %>%
+	mutate(fraction = sample.volume/(dilution.factor*total.volume)) %>%
+	summarise(load = sum(cfu)/sum(fraction), fraction = sum(fraction))
+```
+
+
+### Young adults (Day 3-5)
+
+Linear regression of the log10 of bacterial loads against day and genotype.
+
+```{r, echo=T, message=FALSE, warning=FALSE, comment=NULL}
+Sen.load.controls.Y <- Sen.load.controls %>% filter(day<6)
+
+Sen.load.controls.Y.lm <- lm(log10(load+1) ~ day*genotype, data=Sen.load.controls.Y)
+
+summary(Sen.load.controls.Y.lm)
+
+anova(Sen.load.controls.Y.lm)
+
+par(mfrow=c(2,2))
+plot(Sen.load.controls.Y.lm)
+```
+
+If we impose the same intercept, the growth rate is still greater in pmk-1 worms: 
+
+```{r, echo=T, message=FALSE, warning=FALSE, comment=NULL}
+Sen.load.controls.Y.lm.0 <- lm(log10(load+1) ~ day + day:genotype , data=Sen.load.controls.Y)
+summary(Sen.load.controls.Y.lm.0)
+```
+
+
+### Old adults (Day 7-9)
+
+Linear regression of the log10 of bacterial loads against day and genotype, first with interaction:
+
+```{r, echo=T, message=FALSE, warning=FALSE, comment=NULL}
+Sen.load.controls.O <- Sen.load.controls %>% filter(day>6)
+
+Sen.load.controls.O.lm <- lm(log10(load+1) ~ day*genotype, data=Sen.load.controls.O)
+anova(Sen.load.controls.O.lm)
+```
+
+Dropping the interaction term:
+
+```{r, echo=T, message=FALSE, warning=FALSE, comment=NULL}
+Sen.load.controls.O.lm.2 <- lm(log10(load+1) ~ day+genotype, data=Sen.load.controls.O)
+anova(Sen.load.controls.O.lm.2)
+```
+
+
+### Code for Figure 1
+
+```{r, echo=T, message=FALSE, warning=FALSE, comment=NULL}
+gen.fac <- levels(Sen.load.controls$genotype)
+age.Y <- c(3,5)
+pred.Y <- expand.grid(day=age.Y,genotype=gen.fac)
+pred.cfu.Y <- cbind(pred.Y,cfu.pred=predict.lm(Sen.load.controls.Y.lm,pred.Y))
+
+age.O <- c(7,11)
+pred.O <- expand.grid(day=age.O,genotype=gen.fac)
+pred.cfu.O <- cbind(pred.O,cfu.pred=predict.lm(Sen.load.controls.O.lm,pred.O))
+
+
+ggplot(Sen.load.controls %>% filter(day %in% c(3:5,7:11)) %>% mutate(age = day + sapply(genotype, function(x) if(x=="pmk-1") 0.1 else -0.1)), aes(age,log10(load), shape=genotype)) + geom_point(size=3,position=position_jitter(0.1)) + theme_bw() + scale_shape_manual(values=c(16,1)) + geom_line(aes(x=day,y=cfu.pred,linetype=genotype),data=pred.cfu.Y) + geom_line(aes(x=day,y=cfu.pred,linetype=genotype),data=pred.cfu.O) 
+
+```
+
+
+## WITS composition
+
+### N2 worms (control A)
+
+For each worm, calculate the proportion of bacteria introduced >24h earlier (="old WITS"). Pool worms from the two repeat experiments.
+
+```{r, echo=T, comment=NULL}
+Sen.ctrA.wits <- read.csv("tidy_data_wits_N2_ctrA.csv")
+
+Sen.ctrA.wits.wide <- Sen.ctrA.wits %>%
+	select(-Experiment,-DNA) %>%
+	group_by(Worm.Age,Name) %>%
+	spread(WITS.number,Proportion)
+
+Sen.ctrA.wits <- Sen.ctrA.wits %>% mutate(Wits.day = as.numeric(substr(WITS.number,1,1)), old.WITS = (Wits.day < Worm.Age-1))
+Sen.ctrA.old.wits <- Sen.ctrA.wits %>% group_by(Worm.Age,Name) %>% summarise(old.prop = sum(Proportion*old.WITS))
+```
+
+Relative abundance of "old WITS" in individual worms:
+
+```{r, echo=T, comment=NULL}
+ggplot(Sen.ctrA.old.wits, aes(factor(Worm.Age),old.prop)) + geom_dotplot(aes(fill=factor(Worm.Age)),binaxis="y",method="histodot",binwidth=0.02) +
+	labs(x="Age (days)", y="Abundance of old WITS")
+```
+
+Assuming a binomial distribution of "old WITS" using average cfu numbers measured for each day, we perform a logistic regression (excluding Day3 worms as they have only been exposed to a single WITS):
+
+```{r, echo=T, comment=NULL}
+Sen.ctrA.median.load <- Sen.load.controls %>% filter(genotype=="N2" & day>3) %>% group_by(day) %>% summarise(Worm.Age = mean(day), median.load = round(median(load,na.rm = T))) %>% select(-day)
+
+Sen.ctrA.old.wits.prop <- Sen.ctrA.old.wits %>% left_join(Sen.ctrA.median.load, by="Worm.Age") %>%
+	mutate(old=round(old.prop*median.load), new=round((1-old.prop)*median.load))
+
+wits.age.N2.glm <- glm(cbind(old,new) ~ Worm.Age, binomial, Sen.ctrA.old.wits.prop)
+summary(wits.age.N2.glm)
+
+x.age <- seq(4,10,0.1)
+pred.old.N2 <- predict(wits.age.N2.glm,list(Worm.Age=x.age),type="response")
+
+plot(x.age,pred.old.N2,type="l",ylim=c(0,1),xlab="Age",ylab="Abundance of old WITS")
+points(Sen.ctrA.old.wits.prop$Worm.Age+rnorm(length(Sen.ctrA.old.wits.prop$Worm.Age),0,0.1),Sen.ctrA.old.wits.prop$old.prop)
+
+```
+
+
+Note that the estimates remain unchanged if we use a quasibinomial distribution:
+
+```{r, echo=T, comment=NULL}
+wits.age.N2.glm.2 <- glm(cbind(old,new) ~ Worm.Age, quasibinomial, Sen.ctrA.old.wits.prop)
+summary(wits.age.N2.glm.2)
+```
+
+
+### pmk-1 worms (control B and C)
+
+```{r, echo=T, comment=NULL}
+Sen.ctrBC.wits <- read.csv("tidy_data_wits_others.csv") %>%
+	# Drop unused variables and records:
+	filter(genotype=="pmk-1" & (treatment2=="early.sen" | treatment2=="late.sen")) %>%
+	select(-genotype) %>%
+	# Re-arrange WITS into rows
+	gather("WITS","Percentage",contains("WITS")) %>%
+	mutate(Proportion=Percentage/100) %>%
+	mutate(WITS.number=factor(WITS,labels=c("2.WITS1","3.WITS17","4.WITS21","6.WITS1","7.WITS17","8.WITS21")))
+
+ggplot(Sen.ctrBC.wits, aes(day,Proportion)) + geom_point(aes(col=WITS.number), position=position_jitter(width = 0.5, height=0))
+```
+
+Logistic regression using days 4, 5, 8 and 9:
+
+```{r, echo=T, comment=NULL}
+Sen.ctrBC.load <- Sen.load.controls %>% filter(genotype=="pmk-1") %>% select(-genotype,-fraction) %>%
+	mutate(group.23=sapply(group, function(x) if(x=="control.B") "control.B" else "control.C"))
+
+Sen.ctrBC.wits.load <- Sen.ctrBC.wits %>% 
+	mutate(group.23 = sapply(treatment2,function(x) if(x=="early.sen") "control.B" else"control.C")) %>% select(-treatment2,-WITS,-Percentage) %>%
+	# Spread WITS into 8 columns
+	group_by(group.23,day,worm) %>% spread(WITS.number,Proportion) %>%
+	# Import cfu data
+	left_join(Sen.ctrBC.load %>% select(-group), by=c("day","group.23","worm")) %>%
+	select(-group,-genotype) %>%
+	# Gather WITS
+	gather("WITS.number","Proportion",contains("WITS"))
+	
+Sen.ctrBC.old.wits.prop <- Sen.ctrBC.wits.load %>% filter(day!=3 & day!=7) %>%
+	mutate(old.WITS = as.numeric(substr(WITS.number,1,1)) < day-1) %>%
+	group_by(group.23,day,worm) %>%
+	summarise(old.prop = sum(Proportion*old.WITS), mean.load=mean(load)) %>%
+	mutate(old = round(old.prop*mean.load), new = round((1-old.prop)*mean.load))
+
+# cfu must be taken from cfu.data.controls
+	
+wits.age.pmk.glm <- glm(cbind(old,new) ~ day, binomial, Sen.ctrBC.old.wits.prop)
+summary(wits.age.pmk.glm)
+
+x.age <- seq(4,10,0.1)
+pred.old.pmk <- predict(wits.age.pmk.glm,list(day=x.age),type="response")
+
+plot(x.age,pred.old.pmk,type="l",ylim=c(0,1),xlab="Age",ylab="Abundance of old WITS")
+points(Sen.ctrBC.old.wits.prop$day+rnorm(length(Sen.ctrBC.old.wits.prop$day),0,0.1),Sen.ctrBC.old.wits.prop$old.prop)
+
+```
+
+
+### Code for Figure 2
+
+```{r, fig.cap="WITS composition in N2 worms (control A group)", fig.width=12}
+# N2
+ggplot(Sen.ctrA.wits, aes(factor(Name),Proportion, fill=WITS.number)) +
+	geom_bar(position = "fill",stat="identity") + 
+	facet_grid(~Worm.Age,scales="free") +
+	scale_x_discrete(labels=NULL)+
+	scale_fill_manual(values = c("purple","blue","cyan3","green4","green2","gold","orange","magenta")) + 
+	xlab("Worms by age") +
+	ylab("WITS composition in individual worms") +
+	labs(fill="WITS") +
+	theme(panel.border=element_rect(colour = "grey",fill=NA, size = 1)) +
+	theme(panel.background = element_rect(fill='white', colour='black'))
+
+```
+
+```{r, fig.cap="WITS composition in pmk-1 worms (top: control B group, bottom: control C group)", fig.width=6}
+
+# pmk-1 / Control B
+ggplot(Sen.ctrBC.wits %>% filter(treatment2=="early.sen" & day<7), aes(factor(worm),Proportion, fill=WITS.number)) +
+	geom_bar(position = "fill",stat="identity") + 
+	facet_grid(~day,scales="free") +
+	scale_x_discrete(labels=NULL)+
+	scale_fill_manual(values = c("purple","blue","cyan3","green2","gold","orange")) + 
+	xlab("Worms by age") +
+	ylab("Percentage of WITS per worm") +
+	labs(fill="WITS") +
+	theme(panel.border=element_rect(colour = "grey",fill=NA, size = 1)) +
+	theme(panel.background = element_rect(fill='white', colour='black'))
+
+# pmk-1 / Control C
+ggplot(Sen.ctrBC.wits %>% filter(treatment2=="late.sen" & day>6), aes(factor(worm),Proportion, fill=WITS.number)) +
+	geom_bar(position = "fill",stat="identity") + 
+	facet_grid(~day,scales="free") +
+	scale_x_discrete(labels=NULL)+
+	scale_fill_manual(values = c("purple","blue","cyan3","green2","gold","orange")) + 
+	xlab("Worms by age") +
+	ylab("Percentage of WITS per worm") +
+	labs(fill="WITS") +
+	theme(panel.border=element_rect(colour = "grey",fill=NA, size = 1)) +
+	theme(panel.background = element_rect(fill='white', colour='black'))
+```
+
+
+# Age hinders invasion of pathogen but facilitates its persistence
+
+## N2, early exposure
+
+Wilcoxon test on the _P. aeruginosa_ loads on days 4 and 5.
+
+```{r, echo=T, message=FALSE, comment=NULL}
+# Extract data
+Pae.cfu.N2.early <- cfu.data %>% filter(bacteria=="Pae" & genotype=="N2" & group=="early.exp") %>%
+	select(-bacteria,-genotype,-group,-repeat.)
+
+# Estimate the total number of bacteria per worm
+Pae.load.N2.early <- Pae.cfu.N2.early %>%
+	group_by(day,worm) %>%
+	mutate(fraction = sample.volume/(dilution.factor*total.volume)) %>%
+	summarise(load = sum(cfu)/sum(fraction), fraction = sum(fraction))
+
+with(Pae.load.N2.early, wilcox.test(load[day==4],load[day==5]))
+
+```
+
+## N2, late exposure
+
+Wilcoxon test on the _P. aeruginosa_ loads on days 8 and 9.
+
+```{r, echo=T, message=FALSE, comment=NULL}
+# Extract data
+Pae.cfu.N2.late <- cfu.data %>% filter(bacteria=="Pae" & genotype=="N2" & group=="late.exp") %>%
+	select(-bacteria,-genotype,-group,-repeat.)
+
+# Estimate the total number of bacteria per worm
+Pae.load.N2.late <- Pae.cfu.N2.late %>%
+	group_by(day,worm) %>%
+	mutate(fraction = sample.volume/(dilution.factor*total.volume)) %>%
+	summarise(load = sum(cfu)/sum(fraction), fraction = sum(fraction))
+
+with(Pae.load.N2.late, wilcox.test(load[day==8],load[day==9]))
+
+```
+
+## pmk-1, late exposure
+
+Wilcoxon test on the _P. aeruginosa_ loads on days 8 and 9.
+
+```{r, echo=T, message=FALSE, comment=NULL}
+# Extract data
+Pae.cfu.pmk.late <- cfu.data %>% filter(bacteria=="Pae" & genotype=="pmk-1" & group=="late.exp") %>%
+	select(-bacteria,-genotype,-group,-repeat.)
+
+# Estimate the total number of bacteria per worm
+Pae.load.pmk.late <- Pae.cfu.pmk.late %>%
+	group_by(day,worm) %>%
+	mutate(fraction = sample.volume/(dilution.factor*total.volume)) %>%
+	summarise(load = sum(cfu)/sum(fraction), fraction = sum(fraction))
+
+with(Pae.load.pmk.late, wilcox.test(load[day==8],load[day==9]))
+
+```
+
+## Code for Figure 3
+
+```{r, echo=T}
+# ***************************************** WORK IN PROGRESS ****************************************************
+
+# For each worm in the exposed groups, we need to combine: Pae load, Sen load, proportion new WITS (=WITS21)
+
+# Calculate Pae and Sen loads per worm in the exposed groups
+all.exp.loads <- cfu.data %>% filter(group=="early.exp" | group=="late.exp") %>%
+	# Calculate mean load per worm
+	group_by(genotype,group,day,worm,bacteria) %>%
+	mutate(fraction = sample.volume/(dilution.factor*total.volume)) %>%
+	summarise(load = sum(cfu)/sum(fraction)) %>%
+	# Spread Pae and Sen into 2 columns
+	group_by(genotype,group,day,worm) %>% spread(bacteria,load)
+
+# WITS for exposed groups
+all.exp.wits <- read.csv("tidy_data_wits_others.csv") %>%
+	# Drop unused variables and records:
+	filter(treatment2=="early.pae" | treatment2=="late.pae") %>%
+	mutate(group=factor(as.character(treatment2),labels = c("early.exp","late.exp"))) %>%
+	select(-treatment2) %>%
+	# Re-code WITS
+	select(-WITS1,-WITS2,-WITS4,-WITS5) %>%
+	mutate(new.wits.p = (WITS3+WITS6)/100) %>%
+	select(-WITS3,-WITS6) 
+
+all.exp.load.wits <- left_join(all.exp.loads,all.exp.wits,by=c("genotype","group","day","worm")) %>%
+	filter((group=="early.exp"& (day %in% c(4:9))) | (group=="late.exp" & (day %in% c(8,9)))) %>%
+	mutate(load = log10(Sen+Pae), or.pae.sen = log10(Pae/Sen), p.pae = Pae/(Sen+Pae))
+
+#ggplot(all.exp.load.wits, aes(factor(day),or.pae.sen)) + geom_point(aes(size=load,colour=new.wits.p), position=position_jitter(0.4)) + facet_grid(genotype~group,scales="free") + coord_cartesian(ylim=c(-5,5)) + scale_colour_continuous(low="purple",high="cyan2") + theme_bw()
+
+all.exp.load.wits$group2 <- factor(all.exp.load.wits$group,labels = c("Early exposure","Late exposure"))
+
+ggplot(all.exp.load.wits, aes(factor(day),p.pae)) + geom_boxplot(width=0.4,outlier.size=0,outlier.colour = "white",colour=grey(0.6)) + geom_point(aes(size=load,colour=new.wits.p), position=position_jitter(0.4)) + scale_radius(range=c(1,6)) + facet_grid(genotype~group2,scales="free") + coord_cartesian(ylim=c(0,1)) + scale_colour_continuous(low=rgb(0.2,0,0.4),high="cyan2") + theme_bw() + labs(x="Age (days)",y="Relative abundance of P. aeruginosa",colour="WITS replacement", size="log10 bacterial load")
+
+
+```
+
+
+# Effects of age and commensal bacteria on pathogen-induced mortality
+
+```{r, echo=T, message=F, warning=F}
+# Import data
+survival.data <- read.csv("tidy_data_survival.csv",row.names=NULL)
+```
+
+## Mortality within 24 h of exposure to _P. aeruginosa_
+
+Worms recorded as missing on a given day are treated as alive until then.
+
+```{r, echo=T, message=F, warning=F, comment=NULL}
+early.exp.t <- 4
+late.exp.t <- 8
+
+# This analysis INCLUDES all worms gone missing.
+surv.table <- survival.data  %>% group_by(genotype,group,day,status) %>% 
+	summarise(deaths=n()) %>%
+	mutate(record=ifelse(status==1,"dead.na","missing.na")) %>%
+	# Manipulation to show 0 on days when no events were recorded:
+	spread(record,deaths) %>% select(-status) %>%
+	mutate(dead = sapply(as.numeric(dead.na), function(x){if(is.na(x)) 0 else x})) %>% select(-dead.na) %>%
+	mutate(missing = sapply(as.numeric(missing.na), function(x){if(is.na(x)) 0 else x})) %>% select(-missing.na) %>%
+	# Merge events by day
+	group_by(genotype,group,day) %>% summarise(dead=sum(dead), missing=sum(missing)) %>%
+	# Calculate remaining survivors by day
+	group_by(genotype,group) %>% mutate(surv = sum(dead+missing)-cumsum(dead)-cumsum(missing))
+
+# Separate tables for early and late expsures:	
+early.mort <- surv.table %>% select(-missing) %>% filter(group!="late.exp" & day==early.exp.t) %>% group_by(genotype,group)
+late.mort <- surv.table %>% select(-missing) %>% filter(group!="early.exp" & day==late.exp.t) %>% group_by(genotype,group)
+
+# Merge the two tables:
+pae.mort <- bind_rows(early.mort,late.mort) %>% 
+	# recode variables:
+	mutate(age=as.factor(day), treatment=ifelse(group=="controls","control","exposed")) %>% select(-group,-day) %>%
+	# calculate proportion of deaths with 95% confidence intervals.
+	mutate(mortality = dead/(dead+surv), mort.95.low = mapply(function(s,f)prop.test(s,s+f)$conf.int[1], dead,surv), mort.95.high = mapply(function(s,f)prop.test(s,s+f)$conf.int[2], dead,surv))
+
+
+# Binomial glm analysis of mortality during exposure
+pae.death.glm.a <- glm(cbind(dead,surv) ~ genotype + treatment + age + genotype:treatment + genotype:age + treatment :age, binomial, pae.mort)
+summary(pae.death.glm.a)
+
+pae.death.glm.b <- glm(cbind(dead,surv) ~ treatment + genotype*age, binomial, pae.mort)
+summary(pae.death.glm.b)
+
+```
+
+### Code for Figure 4
+
+```{r, echo=T, message=F, warning=F, comment=NULL}
+
+ggplot(pae.mort, aes(x=age,y=mortality,fill=treatment)) + geom_bar(stat="identity", position=position_dodge(),col="black") + facet_grid(.~genotype) + scale_fill_manual(values = c("white",grey(0.4))) + geom_errorbar(aes(ymin=mort.95.low, ymax=mort.95.high), width=0.1, position=position_dodge(0.9)) + theme_bw()
+
+```
+
+
+
+## Survivorship following return to _S. enterica_
+
+### Early exposure
+
+```{r, echo=T, message=F, warning=F, comment=NULL}
+sub.surv.early <- survival.data %>% filter(day > early.exp.t & group !="late.exp") %>% 
+	mutate(group.early = ifelse(group=="controls","control","exposed")) %>% select(-group)
+
+# Survivorship plot
+surv.post.early <- survfit(Surv(day,status) ~ genotype + group.early, sub.surv.early)
+
+# Cox PH analysis - N2
+coxph.post.early.N2 <- coxph(Surv(day,status) ~ group.early, sub.surv.early, subset=(genotype=="N2"))
+summary(coxph.post.early.N2)
+
+# Cox PH analysis - pmk-1
+coxph.post.early.pmk <- coxph(Surv(day,status) ~ group.early, sub.surv.early, subset=(genotype=="pmk-1"))
+summary(coxph.post.early.pmk)
+
+```
+
+
+### late exposure
+
+```{r, echo=T, message=F, warning=F, comment=NULL}
+sub.surv.late <- survival.data %>% filter(day > late.exp.t & group !="early.exp") %>% 
+	mutate(group.late = ifelse(group=="controls","control","exposed")) %>% select(-group)
+
+# Survivorship plot
+surv.post.late <- survfit(Surv(day,status) ~ genotype + group.late, sub.surv.late)
+
+# Cox PH analysis - N2
+coxph.post.late.N2 <- coxph(Surv(day,status) ~ group.late, sub.surv.late, subset=(genotype=="N2"))
+summary(coxph.post.late.N2)
+
+# Cox PH analysis - pmk-1
+coxph.post.late.pmk <- coxph(Surv(day,status) ~ group.late, sub.surv.late, subset=(genotype=="pmk-1"))
+summary(coxph.post.late.pmk)
+
+```
+
+
+### Code for Figure 5
+
+```{r, echo=T, message=F, warning=F, comment=NULL}
+
+#pdf("Fig_5.pdf",9,5)
+par(mfrow=c(1,2),las=1, yaxs="i",mar=c(4,4,2,0.75))
+# Early exposure
+plot(surv.post.early, col=c("blue","blue","red","red"), lty=c(1,2,1,2), lwd=2, xlim=c(early.exp.t,15),xlab="Age (days)", ylab="Proportion alive", main="Early exposure")
+
+# Late exposure
+plot(surv.post.late, col=c("blue","blue","red","red"), lty=c(1,2,1,2), lwd=2, xlim=c(late.exp.t,15),xlab="Age (days)", main="Late exposure")
+legend("topright",c("N2 control", "N2 exposed", "pmk-1 control", "pmk-1 exposed"), col=c("blue","blue","red","red"), lty=c(1,2,1,2), lwd=2)
+
+#dev.off()
+
+```
+
